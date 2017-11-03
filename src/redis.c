@@ -61,6 +61,10 @@ POSIX_ONLY(#include <sys/utsname.h>)
 #include <locale.h>
 
 
+#ifdef _WIN32
+extern BOOL RunningAsService();
+#endif
+
 /* Our shared "common" objects */
 
 struct sharedObjectsStruct shared;
@@ -1126,9 +1130,31 @@ int serverCron(struct aeEventLoop *eventLoop, PORT_LONGLONG id, void *clientData
     /* We received a SIGTERM, shutting down here in a safe way, as it is
      * not ok doing so inside the signal handler. */
     if (server.shutdown_asap) {
-        if (prepareForShutdown(0) == REDIS_OK) exit(0);
+#ifdef _WIN32
+		/* For Redis running as a Windows service, we want to shutdown gracefully.
+		 * The serverCron will be closed next by the aeStop() function when the service has been terminated so,
+		 * the stop with exit(0), is not good in this situation (in that way we can avoid the "Pipe Terminated" error). */
+		if (RunningAsService())
+		{
+			if (prepareForShutdown(0) != REDIS_OK)
+			{
+				redisLog(REDIS_WARNING, "SIGTERM received but errors trying to shut down the server, check the logs for more information");
+				server.shutdown_asap = 0;
+			}
+			else
+				eventLoop->stop = 1;	// The event timer should be stop
+		}
+		else
+		{
+			if (prepareForShutdown(0) == REDIS_OK) exit(0);
+			redisLog(REDIS_WARNING,"SIGTERM received but errors trying to shut down the server, check the logs for more information");
+			server.shutdown_asap = 0;
+		}
+#else
+		if (prepareForShutdown(0) == REDIS_OK) exit(0);
         redisLog(REDIS_WARNING,"SIGTERM received but errors trying to shut down the server, check the logs for more information");
         server.shutdown_asap = 0;
+#endif
     }
 
     /* Show some info about non-empty databases */
@@ -3518,11 +3544,13 @@ void redisAsciiArt(void) {
 
     if (server.syslog_enabled) {
         redisLog(REDIS_NOTICE,
-            "Redis %s (%s/%d) %s bit, %s mode, port %d, pid %ld ready to start.",
+            "Redis %s (%s/%d) %s bit, Author %s, %s, %s mode, port %d, pid %ld ready to start.",
             REDIS_VERSION,
             redisGitSHA1(),
             strtol(redisGitDirty(),NULL,10) > 0,
             (sizeof(PORT_LONG) == 8) ? "64" : "32",
+			VERSION_AUTHOR,
+			VERSION_COMPANY,
             mode, server.port,
             (PORT_LONG) getpid()
         );
@@ -3532,6 +3560,8 @@ void redisAsciiArt(void) {
             redisGitSHA1(),
             strtol(redisGitDirty(),NULL,10) > 0,
             (sizeof(PORT_LONG) == 8) ? "64" : "32",
+			VERSION_AUTHOR,
+			VERSION_COMPANY,
             mode, server.port,
             (PORT_LONG) getpid()
         );

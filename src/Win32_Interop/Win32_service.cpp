@@ -67,6 +67,7 @@ this should preceed the other arguments passed to redis. For instance:
 #include <sstream>
 #include <vector>
 #include <iostream>
+#include <signal.h>
 #include "Win32_RedisLog.h"
 #include "Win32_CommandLine.h"
 using namespace std;
@@ -527,21 +528,26 @@ DWORD WINAPI ServiceCtrlHandler(DWORD dwControl, DWORD dwEventType, LPVOID lpEve
         case SERVICE_CONTROL_STOP:
         {
             DWORD start = GetTickCount();
-            while (GetTickCount() - start > cPreshutdownInterval) {
-                if (WaitForSingleObject(g_ServiceStoppedEvent, cPreshutdownInterval / 10) == WAIT_OBJECT_0) {
-                    break;
-                }
+			/* BUG #442: in order to resolve the bug about the missing save, I send the signal SIGTERM.
+			 * We need to wait that all the processes are terminated before stop the main process. */
+			raise(SIGTERM);
+			
+			while (true/*GetTickCount() - start > cPreshutdownInterval*/) {
+				// It is needed to wait that all the processes are terminated.
+				if (WaitForSingleObject(g_ServiceStoppedEvent, INFINITE/*cPreshutdownInterval / 10*/) == WAIT_OBJECT_0) {
+					break;
+				}
 
-                g_ServiceStatus.dwControlsAccepted = 0;
-                g_ServiceStatus.dwCurrentState = SERVICE_STOP_PENDING;
-                g_ServiceStatus.dwWin32ExitCode = 0;
-                g_ServiceStatus.dwCheckPoint = 4;
+				g_ServiceStatus.dwControlsAccepted = 0;
+				g_ServiceStatus.dwCurrentState = SERVICE_STOP_PENDING;
+				g_ServiceStatus.dwWin32ExitCode = 0;
+				g_ServiceStatus.dwCheckPoint = 4;
 
-                if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE) {
-                    throw std::system_error(GetLastError(), system_category(), "SetServiceStatus failed");
-                }
-            }
-
+				if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE) {
+					throw std::system_error(GetLastError(), system_category(), "SetServiceStatus failed");
+				}
+			}
+			
             g_ServiceStatus.dwControlsAccepted = 0;
             g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
             g_ServiceStatus.dwWin32ExitCode = 0;
@@ -555,7 +561,7 @@ DWORD WINAPI ServiceCtrlHandler(DWORD dwControl, DWORD dwEventType, LPVOID lpEve
 
         default:
         {
-                   break;
+			break;
         }
     }
 
